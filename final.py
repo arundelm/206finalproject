@@ -1,5 +1,5 @@
 # store_of_value_showdown.py
-# Track Gold, Bitcoin, the S&P500, and Crude Oil compared to the CPI (Inflation Index)
+# Track Gold, Bitcoin, the S&P500, and Natural Gas compared to the CPI (Inflation Index)
 
 import sqlite3
 import requests
@@ -7,6 +7,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import pandas as pd
+import seaborn as sns
 import time
 
 DB_NAME = "store_of_value.db"
@@ -90,9 +91,9 @@ def fetch_and_store_yfinance(ticker, label, retries=3):
     for index, row in data.iterrows():
         date = index.date().isoformat()
         price = row['Close']
-        if price.empty():
+        if pd.isna(price).item():
             continue
-        price = float(price)
+        price = float(price.iloc[0]) if isinstance(price, pd.Series) else float(price)
         c.execute("INSERT INTO traditional_assets (date, asset, price_usd) VALUES (?, ?, ?)",
                   (date, label, price))
 
@@ -106,23 +107,30 @@ def fetch_and_store_cpi():
     url = f"https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCNS&api_key={FRED_API_KEY}&file_type=json"
     response = requests.get(url)
     data = response.json()
+    if "observations" not in data:
+        print("No CPI data returned. Check your FRED API key or series ID.")
+        return
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
     for obs in data.get("observations", []):
-        date = obs["date"]
-        value = obs["value"]
-        if value != ".":  # skip missing data
-            c.execute("INSERT INTO inflation_data (date, cpi) VALUES (?, ?)", (date, float(value)))
+        date = obs.get("date")
+        value = obs.get("value")
+        try:
+            value = float(value)
+        except ValueError:
+            continue
+        c.execute("INSERT INTO inflation_data (date, cpi) VALUES (?, ?)", (date, value))
 
     conn.commit()
     conn.close()
 
 # ----------------------------
-# Fetch and Store Oil Prices from EIA
+# Fetch and Store Natural Gas Prices from EIA
 # ----------------------------
-def fetch_and_store_oil_prices():
-    url = f"https://api.eia.gov/series/?api_key={EIA_API_KEY}&series_id=PET.RWTC.D"
+def fetch_and_store_natgas_prices():
+    url = f"https://api.eia.gov/series/?api_key={EIA_API_KEY}&series_id=NG.RNGWHHD.D"
     response = requests.get(url)
     data = response.json()
     if "series" not in data or not data["series"]:
@@ -136,7 +144,7 @@ def fetch_and_store_oil_prices():
         date = entry[0]  # format: YYYY-MM-DD
         price = float(entry[1])
         c.execute("INSERT INTO traditional_assets (date, asset, price_usd) VALUES (?, ?, ?)",
-                  (date, "OIL", price))
+                  (date, "NATGAS", price))
 
     conn.commit()
     conn.close()
@@ -162,29 +170,35 @@ def generate_charts():
 
     # Pivot table for plotting
     pivot = df.pivot(index="date", columns="asset", values="price_usd")
-    pivot.plot(title="Asset Prices Over Time (Unadjusted)", figsize=(12,6))
-    plt.ylabel("Price in USD")
+    pivot = pivot.ffill()  # forward-fill gaps to fix charting issues
+
+    # Percentage change chart
+    pct_change = pivot.pct_change(fill_method=None).add(1).cumprod().sub(1).mul(100)
+    pct_change.plot(title="Asset Price Change from One Year Ago (%)", figsize=(12, 6))
+    plt.ylabel("% Change")
     plt.xlabel("Date")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig("asset_prices.png")
+    plt.savefig("asset_prices_percent_change.png")
     plt.show()
 
-    # Inflation-adjusted chart (CPI)
-    cpi_df = pd.read_sql_query("SELECT * FROM inflation_data", conn)
-    cpi_df["date"] = pd.to_datetime(cpi_df["date"])
-    cpi_df = cpi_df.sort_values("date").set_index("date")
-
-    merged = pivot.join(cpi_df.set_index("date"), how="inner")
-    base_cpi = merged["cpi"].iloc[-1]
-    adj = merged.drop(columns=["cpi"]).div(merged["cpi"], axis=0).mul(base_cpi)
-
-    adj.plot(title="Inflation-Adjusted Asset Prices", figsize=(12,6))
-    plt.ylabel("Real Price in USD")
+    # Rolling 30-day volatility
+    volatility = pivot.pct_change().rolling(window=30).std().mul(100)
+    volatility.plot(title="30-Day Rolling Volatility (%)", figsize=(12, 6))
+    plt.ylabel("Volatility (%)")
     plt.xlabel("Date")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig("asset_prices_adjusted.png")
+    plt.savefig("asset_volatility.png")
+    plt.show()
+
+    # Correlation heatmap
+    corr = pivot.pct_change().corr()
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f")
+    plt.title("Correlation Between Asset Returns")
+    plt.tight_layout()
+    plt.savefig("asset_correlation.png")
     plt.show()
 
     conn.close()
@@ -194,19 +208,9 @@ def generate_charts():
 # ----------------------------
 if __name__ == "__main__":
     init_db()
-
-    # Fetch crypto: Bitcoin
     fetch_and_store_crypto("bitcoin", "BTC")
-
-    # Fetch traditional assets: Gold (GLD), S&P500 (SPY)
     fetch_and_store_yfinance("GLD", "GLD")
     fetch_and_store_yfinance("SPY", "SPY")
-
-    # Fetch CPI data from FRED
     fetch_and_store_cpi()
-
-    # Fetch Crude Oil Prices from EIA
-    fetch_and_store_oil_prices()
-
-    # Generate Charts
+    fetch_and_store_natgas_prices()
     generate_charts()
