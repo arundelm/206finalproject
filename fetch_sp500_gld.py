@@ -20,10 +20,9 @@ ALPHA_API_KEY = get_api_key(1, 'api_key.txt')
 
 def fetch_and_store_sp500():
     spy = yf.download('SPY', start='2018-01-01', interval='1mo', auto_adjust=False)
-    spy.reset_index(inplace=True)
-
     conn = sqlite3.connect("financial_data.db")
     c = conn.cursor()
+    c.execute("DROP TABLE IF EXISTS SP500_Prices")
     c.execute("""
         CREATE TABLE IF NOT EXISTS SP500_Prices (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,14 +33,15 @@ def fetch_and_store_sp500():
         )
     """)
     count = 0
-    for index, row in spy.iterrows():
+    spy.index = pd.to_datetime(spy.index)
+    for date, row in spy.iterrows():
+        date_str = date.strftime('%Y-%m-%d')
         if count >= 25:
             break
-        date = pd.to_datetime(index).strftime('%Y-%m-%d')
         if pd.isna(row['Close']).item():
             continue
         c.execute("INSERT OR IGNORE INTO SP500_Prices (date, open, close, volume) VALUES (?, ?, ?, ?)",
-                  (date, float(row['Open']), float(row['Close']), int(row['Volume'])))
+                  (date_str, float(row['Open']), float(row['Close']), int(row['Volume'])))
         count += 1
     conn.commit()
     conn.close()

@@ -2,27 +2,31 @@ import requests
 import sqlite3
 import pandas as pd
 import time
+import yfinance as yf
 from datetime import datetime
 
+
 def fetch_and_store_bitcoin():
-    url = "https://api.coindesk.com/v1/bpi/historical/close.json"
-    params = {
-        "start": "2018-01-01",
-        "end": datetime.today().strftime("%Y-%m-%d")
-    }
+    start_date = pd.to_datetime("2018-01-01")
+    end_date = pd.to_datetime(datetime.today().strftime("%Y-%m-%d"))
+    start_ms = int(start_date.timestamp() * 1000)
+    end_ms = int(end_date.timestamp() * 1000)
+
+    url = f"https://api.coincap.io/v2/assets/bitcoin/history?interval=d1&start={start_ms}&end={end_ms}"
+
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url)
         response.raise_for_status()
+        data = response.json().get("data", [])
     except requests.exceptions.RequestException as e:
         print(f"Failed to fetch Bitcoin data: {e}")
         return
 
-    data = response.json().get("bpi", {})
     if not data:
         print("No Bitcoin price data returned.")
         return
 
-    df = pd.DataFrame(data.items(), columns=["date", "price"])
+    df = pd.DataFrame(data)
     df["date"] = pd.to_datetime(df["date"])
     df = df[df["date"] >= pd.to_datetime("2018-01-01")]
     df["YearMonth"] = df["date"].dt.to_period("M")
@@ -35,15 +39,47 @@ def fetch_and_store_bitcoin():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT UNIQUE,
             price REAL
-        )
-    """)
+        )""")
     for _, row in monthly_btc.head(25).iterrows():
         date = row['YearMonth'].start_time.strftime('%Y-%m-%d')
-        price = float(row['price'])
+        price = float(row['priceUsd'])
         c.execute("INSERT OR IGNORE INTO Bitcoin_Prices (date, price) VALUES (?, ?)", (date, price))
     conn.commit()
     conn.close()
     print("Bitcoin data stored successfully.")
+
+
+"""
+def fetch_and_store_bitcoin():
+    btc = yf.download('BTC-USD', start='2018-01-01', interval='1mo', auto_adjust=False)
+
+    conn = sqlite3.connect("financial_data.db")
+    c = conn.cursor()
+    c.execute("DROP TABLE IF EXISTS Bitcoin_Prices")
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS Bitcoin_Prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT UNIQUE,
+            open REAL,
+            close REAL,
+            volume INTEGER
+        )
+    ''')
+
+    count = 0
+    btc.index = pd.to_datetime(btc.index)
+    for date, row in btc.iterrows():
+        date_str = date.strftime('%Y-%m-%d')
+        if count >= 25:
+            break
+        if pd.isna(row['Close']).item():
+            continue
+        c.execute("INSERT OR IGNORE INTO Bitcoin_Prices (date, open, close, volume) VALUES (?, ?, ?, ?)",
+                  (date_str, float(row['Open']), float(row['Close']), int(row['Volume'])))
+        count += 1
+    conn.commit()
+    conn.close()
+"""
 
 if __name__ == '__main__':
   
