@@ -13,6 +13,7 @@ import requests
 import sqlite3
 from datetime import datetime
 from get_api_key import get_api_key
+import pandas as pd
 
 FRED_API_KEY = get_api_key(2, 'api_key.txt')
 
@@ -25,7 +26,6 @@ def fetch_and_store_cpi():
         "observation_start": "2018-01-01"
     }
     response = requests.get(url, params=params).json()
-    print(response)
     data = [(obs['date'], float(obs['value'])) for obs in response['observations'] if obs['value'] != "."]
 
     conn = sqlite3.connect("financial_data.db")
@@ -53,6 +53,11 @@ def fetch_and_store_oil():
     response = requests.get(url, params=params).json()
     data = [(obs['date'], float(obs['value'])) for obs in response['observations'] if obs['value'] != "."]
 
+    df = pd.DataFrame(data, columns=["date", "price"])
+    df["date"] = pd.to_datetime(df["date"])
+    df["YearMonth"] = df["date"].dt.to_period("M")
+    monthly_oil = df.groupby("YearMonth").first().reset_index()
+
     conn = sqlite3.connect("financial_data.db")
     c = conn.cursor()
     c.execute("""
@@ -62,7 +67,9 @@ def fetch_and_store_oil():
             price REAL
         )
     """)
-    for date, price in data[:25]:
+    for _, row in monthly_oil.head(25).iterrows():
+        date = row['YearMonth'].start_time.strftime('%Y-%m-%d')
+        price = row['price']
         c.execute("INSERT OR IGNORE INTO Oil_Prices (date, price) VALUES (?, ?)", (date, price))
     conn.commit()
     conn.close()

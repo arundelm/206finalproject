@@ -19,8 +19,9 @@ import pandas as pd
 ALPHA_API_KEY = get_api_key(1, 'api_key.txt')
 
 def fetch_and_store_sp500():
-    spy = yf.download('SPY', start='2018-01-01', interval='1d')
+    spy = yf.download('SPY', start='2018-01-01', interval='1mo', auto_adjust=False)
     spy.reset_index(inplace=True)
+
     conn = sqlite3.connect("financial_data.db")
     c = conn.cursor()
     c.execute("""
@@ -33,12 +34,14 @@ def fetch_and_store_sp500():
         )
     """)
     count = 0
-    for _, row in spy.iterrows():
+    for index, row in spy.iterrows():
         if count >= 25:
             break
-        date = str(row['Date'].date())
+        date = pd.to_datetime(index).strftime('%Y-%m-%d')
+        if pd.isna(row['Close']).item():
+            continue
         c.execute("INSERT OR IGNORE INTO SP500_Prices (date, open, close, volume) VALUES (?, ?, ?, ?)",
-                  (date, row['Open'], row['Close'], int(row['Volume'])))
+                  (date, float(row['Open']), float(row['Close']), int(row['Volume'])))
         count += 1
     conn.commit()
     conn.close()
@@ -48,11 +51,19 @@ def fetch_and_store_gold():
     params = {
         "function": "TIME_SERIES_DAILY",
         "symbol": "GLD",
-        "apikey": ALPHA_API_KEY,
+        "apikey": "YOUR_ALPHA_VANTAGE_KEY",
         "outputsize": "full"
     }
     response = requests.get(url, params=params).json()
     time_series = response.get("Time Series (Daily)", {})
+
+    # Convert to DataFrame
+    gold_df = pd.DataFrame.from_dict(time_series, orient='index')
+    gold_df.index = pd.to_datetime(gold_df.index)
+    gold_df.sort_index(inplace=True)
+    gold_df['YearMonth'] = gold_df.index.to_period('M')
+    monthly_gold = gold_df.groupby('YearMonth').first().reset_index()
+    monthly_gold = monthly_gold[monthly_gold['YearMonth'] >= pd.Period('2018-01')]
 
     conn = sqlite3.connect("financial_data.db")
     c = conn.cursor()
@@ -65,14 +76,17 @@ def fetch_and_store_gold():
         )
     """)
     count = 0
-    # Store data starting from 2018-01-01
-    for date, data in sorted(time_series.items()):
-        if date < "2018-01-01":
-            continue
+    for _, row in monthly_gold.iterrows():
         if count >= 25:
             break
+        date = row['YearMonth'].start_time.strftime('%Y-%m-%d')
+        try:
+            open_price = float(row['1. open'])
+            close_price = float(row['4. close'])
+        except (KeyError, ValueError, TypeError):
+            continue
         c.execute("INSERT OR IGNORE INTO Gold_Prices (date, open, close) VALUES (?, ?, ?)",
-                  (date, float(data['1. open']), float(data['4. close'])))
+                  (date, open_price, close_price))
         count += 1
     conn.commit()
     conn.close()
