@@ -16,7 +16,7 @@ from datetime import datetime
 from get_api_key import get_api_key
 import pandas as pd
 
-ALPHA_API_KEY = get_api_key(1, 'api_key.txt')
+ALPHA_API_KEY = get_api_key(1)
 
 def fetch_and_store_sp500():
     spy = yf.download('SPY', start='2018-01-01', interval='1mo', auto_adjust=False)

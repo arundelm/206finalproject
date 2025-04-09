@@ -1,6 +1,6 @@
 
-def get_api_key(index, file):
-    with open(file, 'r') as f:
+def get_api_key(index):
+    with open('.env', 'r') as f:
         if index == 1:
             return f.readline().strip()
         elif index == 2:

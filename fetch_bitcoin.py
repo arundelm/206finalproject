@@ -48,39 +48,6 @@ def fetch_and_store_bitcoin():
     conn.close()
     print("Bitcoin data stored successfully.")
 
-
-"""
-def fetch_and_store_bitcoin():
-    btc = yf.download('BTC-USD', start='2018-01-01', interval='1mo', auto_adjust=False)
-
-    conn = sqlite3.connect("financial_data.db")
-    c = conn.cursor()
-    c.execute("DROP TABLE IF EXISTS Bitcoin_Prices")
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS Bitcoin_Prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT UNIQUE,
-            open REAL,
-            close REAL,
-            volume INTEGER
-        )
-    ''')
-
-    count = 0
-    btc.index = pd.to_datetime(btc.index)
-    for date, row in btc.iterrows():
-        date_str = date.strftime('%Y-%m-%d')
-        if count >= 25:
-            break
-        if pd.isna(row['Close']).item():
-            continue
-        c.execute("INSERT OR IGNORE INTO Bitcoin_Prices (date, open, close, volume) VALUES (?, ?, ?, ?)",
-                  (date_str, float(row['Open']), float(row['Close']), int(row['Volume'])))
-        count += 1
-    conn.commit()
-    conn.close()
-"""
-
 if __name__ == '__main__':
   
     fetch_and_store_bitcoin()

@@ -15,7 +15,7 @@ from datetime import datetime
 from get_api_key import get_api_key
 import pandas as pd
 
-FRED_API_KEY = get_api_key(2, 'api_key.txt')
+FRED_API_KEY = get_api_key(2)
 
 def fetch_and_store_cpi():
     url = "https://api.stlouisfed.org/fred/series/observations"
