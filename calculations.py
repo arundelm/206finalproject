@@ -47,12 +47,10 @@ with open("calculations_output.txt", "w") as f:
 # === GRAPH 1: Price-to-CPI Ratios Over Time ===
 plt.figure(figsize=(12, 6))
 
-# Normalize each series to start at 100
 normalized = merged[['date', 'btc_to_cpi', 'sp500_to_cpi', 'gold_to_cpi', 'oil_to_cpi']].copy()
 for col in ['btc_to_cpi', 'sp500_to_cpi', 'gold_to_cpi', 'oil_to_cpi']:
     normalized[col] = normalized[col] / normalized[col].iloc[0] * 100
 
-# Plot normalized series
 plt.plot(normalized['date'], normalized['btc_to_cpi'], label='Bitcoin / CPI')
 plt.plot(normalized['date'], normalized['sp500_to_cpi'], label='S&P500 / CPI')
 plt.plot(normalized['date'], normalized['gold_to_cpi'], label='Gold / CPI')

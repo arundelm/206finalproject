@@ -1,52 +1,75 @@
-import requests
-import sqlite3
-import pandas as pd
-import time
 import yfinance as yf
+import sqlite3
 from datetime import datetime
-
+from dateutil.relativedelta import relativedelta
 
 def fetch_and_store_bitcoin():
-    start_date = pd.to_datetime("2018-01-01")
-    end_date = pd.to_datetime(datetime.today().strftime("%Y-%m-%d"))
-    start_ms = int(start_date.timestamp() * 1000)
-    end_ms = int(end_date.timestamp() * 1000)
+    with sqlite3.connect("financial_data.db") as conn:
+        c = conn.cursor()
 
-    url = f"https://api.coincap.io/v2/assets/bitcoin/history?interval=d1&start={start_ms}&end={end_ms}"
+        # Create table if it doesn't exist
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS Bitcoin_Prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE,
+                price REAL
+            )
+        """)
 
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json().get("data", [])
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to fetch Bitcoin data: {e}")
-        return
+        # Get how many rows already exist
+        c.execute("SELECT COUNT(*) FROM Bitcoin_Prices")
+        current_count = c.fetchone()[0]
 
-    if not data:
-        print("No Bitcoin price data returned.")
-        return
+        if current_count >= 100:
+            print("100 Bitcoin data points already stored.")
+            return
 
-    df = pd.DataFrame(data)
-    df["date"] = pd.to_datetime(df["date"])
-    df = df[df["date"] >= pd.to_datetime("2018-01-01")]
-    df["YearMonth"] = df["date"].dt.to_period("M")
-    monthly_btc = df.groupby("YearMonth").first().reset_index()
+        # Determine date chunk
+        chunk_index = current_count // 25
+        chunk_size = 25
+        base_start = datetime(2016, 7, 1)
+        chunk_start = base_start + relativedelta(months=chunk_index * chunk_size)
+        chunk_end = chunk_start + relativedelta(months=chunk_size)
 
-    conn = sqlite3.connect("financial_data.db")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS Bitcoin_Prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT UNIQUE,
-            price REAL
-        )""")
-    for _, row in monthly_btc.head(25).iterrows():
-        date = row['YearMonth'].start_time.strftime('%Y-%m-%d')
-        price = float(row['priceUsd'])
-        c.execute("INSERT OR IGNORE INTO Bitcoin_Prices (date, price) VALUES (?, ?)", (date, price))
-    conn.commit()
-    conn.close()
-    print("Bitcoin data stored successfully.")
+        print(f"Fetching chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
+
+        # Download daily data for the chunk
+        data = yf.download(
+            "BTC-USD",
+            start=chunk_start.strftime("%Y-%m-%d"),
+            end=chunk_end.strftime("%Y-%m-%d"),
+            interval="1d",
+            progress=False,
+            auto_adjust=False
+        )
+
+        if data is None or data.empty:
+            print("No data returned from yfinance.")
+            return
+
+        # Get first price of each month
+        monthly_data = {}
+        for dt, row in data.iterrows():
+            dt_obj = dt.to_pydatetime()
+            ym_key = (dt_obj.year, dt_obj.month)
+            if ym_key not in monthly_data:
+                try:
+                    price = float(row["Open"].item())
+                    monthly_data[ym_key] = (dt_obj, price)
+                except:
+                    continue
+
+            if len(monthly_data) == 25:
+                break
+
+        inserted = 0
+        for (_, _), (dt, price) in sorted(monthly_data.items()):
+            date_str = dt.strftime("%Y-%m-%d")
+            c.execute("INSERT OR IGNORE INTO Bitcoin_Prices (date, price) VALUES (?, ?)", (date_str, price))
+            inserted += 1
+
+        conn.commit()
+        print(f"Inserted {inserted} BTC entries. Total should now be {current_count + inserted}.")
 
 if __name__ == '__main__':
   

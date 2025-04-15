@@ -10,88 +10,173 @@
 
 # File: fetch_sp500_gold.py
 import yfinance as yf
+import sqlite3
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+from get_api_key import get_api_key
+
+ALPHA_API_KEY = get_api_key(1)
+def fetch_and_store_sp500():
+    with sqlite3.connect("financial_data.db") as conn:
+        c = conn.cursor()
+
+        # Create the SP500_Prices table if it doesn't exist
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS SP500_Prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE,
+                open REAL,
+                close REAL,
+                volume INTEGER
+            )
+        """)
+  
+        # Get how many SP500 rows already exist
+        c.execute("SELECT COUNT(*) FROM SP500_Prices")
+        current_count = c.fetchone()[0]
+
+        if current_count >= 100:
+            print("100 SP500 data points already stored.")
+            return
+
+        # Determine date chunk based on current_count
+        chunk_index = current_count // 25
+        chunk_size = 25
+        base_start = datetime(2016, 7, 1)
+        chunk_start = base_start + relativedelta(months=chunk_index * chunk_size)
+        chunk_end = chunk_start + relativedelta(months=chunk_size)
+
+        print(f"Fetching SP500 chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
+
+        # Download monthly SPY data for that chunk
+        data = yf.download(
+            "SPY",
+            start=chunk_start.strftime("%Y-%m-%d"),
+            end=chunk_end.strftime("%Y-%m-%d"),
+            interval="1d",
+            progress=False,
+            auto_adjust=False
+        )
+
+        if data is None or data.empty:
+            print("No SPY data returned from yfinance.")
+            return
+
+        # Extract first available entry per month
+        monthly_data = {}
+        for dt, row in data.iterrows():
+            dt_obj = dt.to_pydatetime()
+            ym_key = (dt_obj.year, dt_obj.month)
+            if ym_key not in monthly_data:
+                try:
+                    open_price = float(row["Open"].item())
+                    close_price = float(row["Close"].item())
+                    volume = int(row["Volume"].item())
+                    monthly_data[ym_key] = (dt_obj, open_price, close_price, volume)
+                except:
+                    continue
+
+            if len(monthly_data) == 25:
+                break
+
+        inserted = 0
+        for (_, _), (dt, open_price, close_price, volume) in sorted(monthly_data.items()):
+            date_str = dt.strftime("%Y-%m-%d")
+            c.execute("""
+                INSERT OR IGNORE INTO SP500_Prices (date, open, close, volume)
+                VALUES (?, ?, ?, ?)
+            """, (date_str, open_price, close_price, volume))
+            inserted += 1
+
+        conn.commit()
+        print(f"Inserted {inserted} SP500 entries. Total should now be {current_count + inserted}.")
+
+
 import requests
 import sqlite3
 from datetime import datetime
-from get_api_key import get_api_key
-import pandas as pd
+from dateutil.relativedelta import relativedelta
 
-ALPHA_API_KEY = get_api_key(1)
-
-def fetch_and_store_sp500():
-    spy = yf.download('SPY', start='2018-01-01', interval='1mo', auto_adjust=False)
-    conn = sqlite3.connect("financial_data.db")
-    c = conn.cursor()
-    c.execute("DROP TABLE IF EXISTS SP500_Prices")
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS SP500_Prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT UNIQUE,
-            open REAL,
-            close REAL,
-            volume INTEGER
-        )
-    """)
-    count = 0
-    spy.index = pd.to_datetime(spy.index)
-    for date, row in spy.iterrows():
-        date_str = date.strftime('%Y-%m-%d')
-        if count >= 25:
-            break
-        if pd.isna(row['Close']).item():
-            continue
-        c.execute("INSERT OR IGNORE INTO SP500_Prices (date, open, close, volume) VALUES (?, ?, ?, ?)",
-                  (date_str, float(row['Open']), float(row['Close']), int(row['Volume'])))
-        count += 1
-    conn.commit()
-    conn.close()
+import requests
+import sqlite3
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 def fetch_and_store_gold():
-    url = "https://www.alphavantage.co/query"
-    params = {
-        "function": "TIME_SERIES_DAILY",
-        "symbol": "GLD",
-        "apikey": "YOUR_ALPHA_VANTAGE_KEY",
-        "outputsize": "full"
-    }
-    response = requests.get(url, params=params).json()
-    time_series = response.get("Time Series (Daily)", {})
+    ALPHA_API_KEY = "YOUR_API_KEY"  # Replace with your actual key
 
-    # Convert to DataFrame
-    gold_df = pd.DataFrame.from_dict(time_series, orient='index')
-    gold_df.index = pd.to_datetime(gold_df.index)
-    gold_df.sort_index(inplace=True)
-    gold_df['YearMonth'] = gold_df.index.to_period('M')
-    monthly_gold = gold_df.groupby('YearMonth').first().reset_index()
-    monthly_gold = monthly_gold[monthly_gold['YearMonth'] >= pd.Period('2018-01')]
+    with sqlite3.connect("financial_data.db") as conn:
+        c = conn.cursor()
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS Gold_Prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT UNIQUE,
+                open REAL,
+                close REAL
+            )
+        """)
 
-    conn = sqlite3.connect("financial_data.db")
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS Gold_Prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT UNIQUE,
-            open REAL,
-            close REAL
-        )
-    """)
-    count = 0
-    for _, row in monthly_gold.iterrows():
-        if count >= 25:
-            break
-        date = row['YearMonth'].start_time.strftime('%Y-%m-%d')
-        try:
-            open_price = float(row['1. open'])
-            close_price = float(row['4. close'])
-        except (KeyError, ValueError, TypeError):
-            continue
-        c.execute("INSERT OR IGNORE INTO Gold_Prices (date, open, close) VALUES (?, ?, ?)",
-                  (date, open_price, close_price))
-        count += 1
-    conn.commit()
-    conn.close()
-    if count > 0:
-        print(f"Gold data stored starting from {date} (up to 25 entries per run).")
+        # Count how many rows are already inserted
+        c.execute("SELECT COUNT(*) FROM Gold_Prices")
+        current_count = c.fetchone()[0]
+
+        if current_count >= 100:
+            print("100 Gold entries already exist. Skipping.")
+            return
+
+        # Calculate the 25-month chunk to fetch
+        chunk_index = current_count // 25
+        chunk_size = 25
+        base_start = datetime(2016, 7, 1)
+        chunk_start = base_start + relativedelta(months=chunk_index * chunk_size)
+        chunk_end = chunk_start + relativedelta(months=chunk_size)
+
+        print(f"Fetching Gold chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
+
+        # Fetch full GLD data from AlphaVantage
+        url = "https://www.alphavantage.co/query"
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": "GLD",
+            "apikey": ALPHA_API_KEY,
+            "outputsize": "full"
+        }
+
+        response = requests.get(url, params=params).json()
+        time_series = response.get("Time Series (Daily)", {})
+        if not time_series:
+            print("No time series data found in the response.")
+            return
+
+        # Collect one entry per month in the current chunk
+        monthly_data = {}
+        for date_str in sorted(time_series.keys()):
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            if dt < chunk_start or dt >= chunk_end:
+                continue
+
+            ym_key = (dt.year, dt.month)
+            if ym_key not in monthly_data:
+                try:
+                    entry = time_series[date_str]
+                    open_price = float(entry["1. open"])
+                    close_price = float(entry["4. close"])
+                    monthly_data[ym_key] = (dt, open_price, close_price)
+                except (KeyError, ValueError):
+                    continue
+
+            if len(monthly_data) == 25:
+                break
+
+        inserted = 0
+        for (_, _), (dt, open_price, close_price) in sorted(monthly_data.items()):
+            date_str = dt.strftime("%Y-%m-%d")
+            c.execute("INSERT OR IGNORE INTO Gold_Prices (date, open, close) VALUES (?, ?, ?)",
+                      (date_str, open_price, close_price))
+            inserted += 1
+
+        conn.commit()
+        print(f"Inserted {inserted} new Gold entries. Total should now be {current_count + inserted}.")
 
 if __name__ == '__main__':
     fetch_and_store_sp500()
