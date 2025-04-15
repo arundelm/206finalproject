@@ -1,26 +1,31 @@
-# Directory Structure (for a 3-person group)
+# === Directory Structure (for a 3-person group) ===
 # project_root/
 # └── data_fetch/
-#     ├── fetch_sp500_gold.py
+#     ├── fetch_sp500_gold.py         <- this file
 #     ├── fetch_bitcoin.py
 #     └── fetch_cpi_oil.py
 # analysis/
 #     └── process_and_visualize.py
 # main.py
 
-# File: fetch_sp500_gold.py
+# === File: fetch_sp500_gold.py ===
+
 import yfinance as yf
 import sqlite3
+import requests
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from get_api_key import get_api_key
 
+# Load your AlphaVantage API key (for gold prices)
 ALPHA_API_KEY = get_api_key(1)
+
+# === Function: Fetch and store S&P 500 (SPY ETF) data ===
 def fetch_and_store_sp500():
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
 
-        # Create the SP500_Prices table if it doesn't exist
+        # Create table for SP500 data if it doesn't exist
         c.execute("""
             CREATE TABLE IF NOT EXISTS SP500_Prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,8 +35,8 @@ def fetch_and_store_sp500():
                 volume INTEGER
             )
         """)
-  
-        # Get how many SP500 rows already exist
+
+        # Check how many rows are already in the table
         c.execute("SELECT COUNT(*) FROM SP500_Prices")
         current_count = c.fetchone()[0]
 
@@ -39,7 +44,7 @@ def fetch_and_store_sp500():
             print("100 SP500 data points already stored.")
             return
 
-        # Determine date chunk based on current_count
+        # Determine the 25-month chunk to fetch next
         chunk_index = current_count // 25
         chunk_size = 25
         base_start = datetime(2016, 7, 1)
@@ -48,7 +53,7 @@ def fetch_and_store_sp500():
 
         print(f"Fetching SP500 chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
 
-        # Download monthly SPY data for that chunk
+        # Use yfinance to fetch SPY daily data for this time range
         data = yf.download(
             "SPY",
             start=chunk_start.strftime("%Y-%m-%d"),
@@ -58,11 +63,12 @@ def fetch_and_store_sp500():
             auto_adjust=False
         )
 
+        # Skip if no data is returned
         if data is None or data.empty:
             print("No SPY data returned from yfinance.")
             return
 
-        # Extract first available entry per month
+        # Extract the first available entry per month
         monthly_data = {}
         for dt, row in data.iterrows():
             dt_obj = dt.to_pydatetime()
@@ -79,6 +85,7 @@ def fetch_and_store_sp500():
             if len(monthly_data) == 25:
                 break
 
+        # Insert into database
         inserted = 0
         for (_, _), (dt, open_price, close_price, volume) in sorted(monthly_data.items()):
             date_str = dt.strftime("%Y-%m-%d")
@@ -91,22 +98,15 @@ def fetch_and_store_sp500():
         conn.commit()
         print(f"Inserted {inserted} SP500 entries. Total should now be {current_count + inserted}.")
 
-
-import requests
-import sqlite3
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
-
-import requests
-import sqlite3
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
-
+# === Function: Fetch and store Gold (GLD ETF) data ===
 def fetch_and_store_gold():
-    ALPHA_API_KEY = "YOUR_API_KEY"  # Replace with your actual key
+    # NOTE: Replace with secure API key management in production
+    ALPHA_API_KEY = "YOUR_API_KEY"  # If you didn't use get_api_key(), hardcode or load safely
 
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
+
+        # Create Gold_Prices table if it doesn't exist
         c.execute("""
             CREATE TABLE IF NOT EXISTS Gold_Prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +116,7 @@ def fetch_and_store_gold():
             )
         """)
 
-        # Count how many rows are already inserted
+        # Check how many rows exist already
         c.execute("SELECT COUNT(*) FROM Gold_Prices")
         current_count = c.fetchone()[0]
 
@@ -124,7 +124,7 @@ def fetch_and_store_gold():
             print("100 Gold entries already exist. Skipping.")
             return
 
-        # Calculate the 25-month chunk to fetch
+        # Determine chunk range (25-month blocks)
         chunk_index = current_count // 25
         chunk_size = 25
         base_start = datetime(2016, 7, 1)
@@ -133,7 +133,7 @@ def fetch_and_store_gold():
 
         print(f"Fetching Gold chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
 
-        # Fetch full GLD data from AlphaVantage
+        # Request full GLD daily data from AlphaVantage
         url = "https://www.alphavantage.co/query"
         params = {
             "function": "TIME_SERIES_DAILY",
@@ -144,11 +144,12 @@ def fetch_and_store_gold():
 
         response = requests.get(url, params=params).json()
         time_series = response.get("Time Series (Daily)", {})
+
         if not time_series:
             print("No time series data found in the response.")
             return
 
-        # Collect one entry per month in the current chunk
+        # Parse one entry per month from the chunk
         monthly_data = {}
         for date_str in sorted(time_series.keys()):
             dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -168,6 +169,7 @@ def fetch_and_store_gold():
             if len(monthly_data) == 25:
                 break
 
+        # Insert new rows into Gold_Prices table
         inserted = 0
         for (_, _), (dt, open_price, close_price) in sorted(monthly_data.items()):
             date_str = dt.strftime("%Y-%m-%d")
@@ -178,6 +180,8 @@ def fetch_and_store_gold():
         conn.commit()
         print(f"Inserted {inserted} new Gold entries. Total should now be {current_count + inserted}.")
 
+# === MAIN EXECUTION ===
+# Run both fetch functions when this file is executed directly
 if __name__ == '__main__':
     fetch_and_store_sp500()
     fetch_and_store_gold()

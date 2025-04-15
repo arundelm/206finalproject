@@ -1,4 +1,4 @@
-Price-to-CPI Ratios (First 10 Rows):
+Price-to-CPI Ratios (First 20 Rows):
 2016-07-01: BTC/CPI=2.80, SP500/CPI=0.87, Gold/CPI=0.53, Oil/CPI=0.20
 2016-08-01: BTC/CPI=2.60, SP500/CPI=0.90, Gold/CPI=0.54, Oil/CPI=0.17
 2016-09-01: BTC/CPI=2.39, SP500/CPI=0.90, Gold/CPI=0.52, Oil/CPI=0.18
