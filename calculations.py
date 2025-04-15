@@ -1,16 +1,17 @@
 import sqlite3
-import pandas as pd
+from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
 
-# === CONNECT TO DATABASE ===
+# === CONNECT AND FETCH DATA WITHOUT PANDAS ===
 conn = sqlite3.connect("financial_data.db")
+cursor = conn.cursor()
 
-# === SQL JOIN QUERY ===
 query = """
 SELECT
     btc.date AS date,
-    btc.close AS btc_price,
+    btc.price AS btc_price,
     sp.close AS sp500_price,
     gold.close AS gold_price,
     oil.price AS oil_price,
@@ -22,52 +23,62 @@ JOIN Oil_Prices oil ON btc.date = oil.date
 JOIN CPI_Data cpi ON btc.date = cpi.date
 ORDER BY btc.date ASC
 """
-
-# === EXECUTE QUERY ===
-merged = pd.read_sql_query(query, conn, parse_dates=["date"])
+cursor.execute(query)
+rows = cursor.fetchall()
 conn.close()
 
-# === CALCULATIONS ===
-merged['btc_to_cpi'] = merged['btc_price'] / merged['cpi_value']
-merged['sp500_to_cpi'] = merged['sp500_price'] / merged['cpi_value']
-merged['gold_to_cpi'] = merged['gold_price'] / merged['cpi_value']
-merged['oil_to_cpi'] = merged['oil_price'] / merged['cpi_value']
+# === PARSE DATA ===
+dates, btc, sp, gold, oil, cpi = [], [], [], [], [], []
+for row in rows:
+    dates.append(datetime.strptime(row[0], "%Y-%m-%d"))
+    btc.append(row[1])
+    sp.append(row[2])
+    gold.append(row[3])
+    oil.append(row[4])
+    cpi.append(row[5])
 
-# === WRITE TO TEXT FILE ===
+# === CALCULATIONS ===
+btc_to_cpi = [b / c for b, c in zip(btc, cpi)]
+sp_to_cpi = [s / c for s, c in zip(sp, cpi)]
+gold_to_cpi = [g / c for g, c in zip(gold, cpi)]
+oil_to_cpi = [o / c for o, c in zip(oil, cpi)]
+
+# === WRITE FIRST 10 RATIO ROWS ===
 with open("calculations_output.txt", "w") as f:
     f.write("Price-to-CPI Ratios (First 10 Rows):\n")
-    f.write(merged[['date', 'btc_to_cpi', 'sp500_to_cpi', 'gold_to_cpi', 'oil_to_cpi']].head(10).to_string(index=False))
-    f.write("\n\n")
+    for i in range(20):
+        f.write(f"{dates[i].strftime('%Y-%m-%d')}: BTC/CPI={btc_to_cpi[i]:.2f}, SP500/CPI={sp_to_cpi[i]:.2f}, Gold/CPI={gold_to_cpi[i]:.2f}, Oil/CPI={oil_to_cpi[i]:.2f}\n")
 
-    f.write("Correlation Matrix:\n")
-    corr = merged[['btc_price', 'sp500_price', 'gold_price', 'oil_price', 'cpi_value']].corr()
-    f.write(corr.to_string())
-    f.write("\n")
+# === CORRELATION MATRIX ===
+data_matrix = np.array([btc, sp, gold, oil, cpi])
+corr_matrix = np.corrcoef(data_matrix)
+labels = ['btc', 'sp500', 'gold', 'oil', 'cpi']
 
-# === GRAPH 1: Price-to-CPI Ratios Over Time ===
+with open("calculations_output.txt", "a") as f:
+    f.write("\nCorrelation Matrix:\n")
+    f.write('\t' + '\t'.join(labels) + '\n')
+    for i, row in enumerate(corr_matrix):
+        f.write(labels[i] + '\t' + '\t'.join(f"{val:.2f}" for val in row) + '\n')
+
+# === GRAPH 1: Normalized Price-to-CPI Ratios ===
 plt.figure(figsize=(12, 6))
-
-normalized = merged[['date', 'btc_to_cpi', 'sp500_to_cpi', 'gold_to_cpi', 'oil_to_cpi']].copy()
-for col in ['btc_to_cpi', 'sp500_to_cpi', 'gold_to_cpi', 'oil_to_cpi']:
-    normalized[col] = normalized[col] / normalized[col].iloc[0] * 100
-
-plt.plot(normalized['date'], normalized['btc_to_cpi'], label='Bitcoin / CPI')
-plt.plot(normalized['date'], normalized['sp500_to_cpi'], label='S&P500 / CPI')
-plt.plot(normalized['date'], normalized['gold_to_cpi'], label='Gold / CPI')
-plt.plot(normalized['date'], normalized['oil_to_cpi'], label='Oil / CPI')
-
-plt.xlabel('Date')
-plt.ylabel('Normalized Price-to-CPI Ratio (Base = 100)')
-plt.title('Normalized Price-to-CPI Ratios Over Time')
+plt.plot(dates, [x / btc_to_cpi[0] * 100 for x in btc_to_cpi], label='Bitcoin / CPI')
+plt.plot(dates, [x / sp_to_cpi[0] * 100 for x in sp_to_cpi], label='S&P500 / CPI')
+plt.plot(dates, [x / gold_to_cpi[0] * 100 for x in gold_to_cpi], label='Gold / CPI')
+plt.plot(dates, [x / oil_to_cpi[0] * 100 for x in oil_to_cpi], label='Oil / CPI')
+plt.xlabel("Date")
+plt.ylabel("Log Normalized Price-to-CPI Ratio (Base = 100)")
+plt.yscale("log")
+plt.title("Normalized Price-to-CPI Ratios Over Time (Log Scale)")
 plt.legend()
-plt.grid(True)
+plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 plt.tight_layout()
-plt.savefig("price_to_cpi_ratio.png")
+plt.savefig("price_to_cpi_ratio_log.png")
 plt.close()
 
 # === GRAPH 2: Bitcoin vs Gold Prices Scatterplot ===
 plt.figure(figsize=(8, 6))
-sns.scatterplot(data=merged, x='gold_price', y='btc_price')
+sns.scatterplot(x=gold, y=btc)
 plt.xlabel("Gold Price (USD)")
 plt.ylabel("Bitcoin Price (USD)")
 plt.title("Bitcoin vs Gold Prices")
@@ -76,54 +87,58 @@ plt.tight_layout()
 plt.savefig("btc_vs_gold_scatter.png")
 plt.close()
 
-# === RESAMPLE TO MONTHLY AVERAGE PRICES ===
-monthly = merged.set_index('date').resample('M').mean().dropna()
+# === MANUAL MONTHLY RETURNS ===
+returns = {
+    "btc": [],
+    "sp": [],
+    "gold": [],
+    "oil": []
+}
 
-# === CALCULATE MONTHLY % RETURNS ===
-monthly_returns = monthly[['btc_price', 'sp500_price', 'gold_price', 'oil_price']].pct_change().dropna()
-average_returns = monthly_returns.mean() * 100  # Convert to %
+for i in range(1, len(dates)):
+    returns["btc"].append((btc[i] - btc[i - 1]) / btc[i - 1])
+    returns["sp"].append((sp[i] - sp[i - 1]) / sp[i - 1])
+    returns["gold"].append((gold[i] - gold[i - 1]) / gold[i - 1])
+    returns["oil"].append((oil[i] - oil[i - 1]) / oil[i - 1])
 
-# === WRITE TO FILE ===
+# === AVERAGE RETURNS ===
+average_returns = {k: np.mean(v) * 100 for k, v in returns.items()}
 with open("calculations_output.txt", "a") as f:
     f.write("\nAverage Monthly Returns (%):\n")
-    f.write(average_returns.to_string())
-    f.write("\n")
+    for asset, avg in average_returns.items():
+        f.write(f"{asset}: {avg:.2f}%\n")
 
-# === GRAPH 3: Average Monthly Returns Bar Chart ===
+# === GRAPH 3: Average Monthly Returns ===
 plt.figure(figsize=(8, 6))
-average_returns.plot(kind='bar')
-plt.title('Average Monthly Returns (%)')
-plt.ylabel('Average % Return')
-plt.xticks(rotation=45)
-plt.tight_layout()
+plt.bar(average_returns.keys(), average_returns.values())
+plt.title("Average Monthly Returns (%)")
+plt.ylabel("Average % Return")
 plt.grid(True)
+plt.tight_layout()
 plt.savefig("avg_monthly_returns.png")
 plt.close()
 
 # === GRAPH 4: Correlation Heatmap ===
 plt.figure(figsize=(8, 6))
-sns.heatmap(merged[['btc_price', 'sp500_price', 'gold_price', 'oil_price', 'cpi_value']].corr(), annot=True, cmap='coolwarm')
+sns.heatmap(corr_matrix, xticklabels=labels, yticklabels=labels, annot=True, cmap='coolwarm')
 plt.title("Correlation Heatmap Between Assets")
 plt.tight_layout()
 plt.savefig("correlation_heatmap.png")
 plt.close()
 
-# === CALCULATE VOLATILITY (Standard Deviation of Monthly Returns) ===
-volatility = monthly_returns.std() * 100  # Convert to %
-
-# === WRITE TO FILE ===
+# === VOLATILITY ===
+volatility = {k: np.std(v) * 100 for k, v in returns.items()}
 with open("calculations_output.txt", "a") as f:
     f.write("\nVolatility of Monthly Returns (%):\n")
-    f.write(volatility.to_string())
-    f.write("\n")
+    for asset, vol in volatility.items():
+        f.write(f"{asset}: {vol:.2f}%\n")
 
 # === GRAPH 5: Volatility Bar Chart ===
 plt.figure(figsize=(8, 6))
-volatility.plot(kind='bar', color='orange')
-plt.title('Volatility of Monthly Returns (%)')
-plt.ylabel('Standard Deviation (%)')
-plt.xticks(rotation=45)
-plt.tight_layout()
+plt.bar(volatility.keys(), volatility.values(), color='orange')
+plt.title("Volatility of Monthly Returns (%)")
+plt.ylabel("Standard Deviation (%)")
 plt.grid(True)
+plt.tight_layout()
 plt.savefig("volatility_bar_chart.png")
 plt.close()
