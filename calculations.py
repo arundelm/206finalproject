@@ -5,7 +5,7 @@ import seaborn as sns
 import numpy as np
 
 # === CONNECT TO DATABASE AND FETCH DATA ===
-# Connect to the SQLite database
+# Allows to connect to the SQLite database
 conn = sqlite3.connect("financial_data.db")
 cursor = conn.cursor()
 
