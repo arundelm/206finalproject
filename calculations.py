@@ -42,18 +42,19 @@ for row in rows:
     oil.append(row[4])
     cpi.append(row[5])
 
-# === CALCULATE PRICE-TO-CPI RATIOS ===
-# Each value divided by CPI to get inflation-adjusted price
-btc_to_cpi = [b / c for b, c in zip(btc, cpi)]
-sp_to_cpi = [s / c for s, c in zip(sp, cpi)]
-gold_to_cpi = [g / c for g, c in zip(gold, cpi)]
-oil_to_cpi = [o / c for o, c in zip(oil, cpi)]
 
 # === WRITE FIRST 20 PRICE/CPI RATIO ROWS TO FILE ===
 with open("calculations_output.txt", "w") as f:
     f.write("Price-to-CPI Ratios (First 20 Rows):\n")
     for i in range(20):
         f.write(f"{dates[i].strftime('%Y-%m-%d')}: BTC/CPI={btc_to_cpi[i]:.2f}, SP500/CPI={sp_to_cpi[i]:.2f}, Gold/CPI={gold_to_cpi[i]:.2f}, Oil/CPI={oil_to_cpi[i]:.2f}\n")
+
+# === CALCULATE PRICE-TO-CPI RATIOS ===
+# Each value divided by CPI to get inflation-adjusted price
+btc_to_cpi = [b / c for b, c in zip(btc, cpi)]
+sp_to_cpi = [s / c for s, c in zip(sp, cpi)]
+gold_to_cpi = [g / c for g, c in zip(gold, cpi)]
+oil_to_cpi = [o / c for o, c in zip(oil, cpi)]
 
 # === CALCULATE CORRELATION MATRIX ===
 # Using numpy to compute correlations between raw asset prices and CPI
