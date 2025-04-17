@@ -1,40 +1,43 @@
 # === fetch_cpi_oil.py ===
-# Fetches and stores CPI and Crude Oil data from the FRED API into SQLite database.
-# Adds 25 new monthly datapoints per run, up to a max of 100 for each dataset.
+# Fetches and stores CPI and Crude Oil data into the Combined_Prices table (shared date key)
 
 import requests
 import sqlite3
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
-from get_api_key import get_api_key  # Securely fetches your FRED API key
+from get_api_key import get_api_key
 
-# Load the API key from secure storage
 FRED_API_KEY = get_api_key(2)
 
-# === Function: Fetch and store CPI data from FRED ===
+# === Fetch and store CPI values into Combined_Prices ===
 def fetch_and_store_cpi():
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
 
-        # Create table if it doesn't exist
+        # Ensure Combined_Prices table exists
         c.execute("""
-            CREATE TABLE IF NOT EXISTS CPI_Data (
+            CREATE TABLE IF NOT EXISTS Combined_Prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT UNIQUE,
+                btc_price REAL,
+                sp500_price REAL,
+                gold_open REAL,
+                gold_close REAL,
+                gold_change INTEGER,
+                oil_price REAL,
                 cpi_value REAL
             )
         """)
 
-        # Count how many rows already exist in the table
-        c.execute("SELECT COUNT(*) FROM CPI_Data")
+        # Count existing CPI entries (i.e., rows where cpi_value is not NULL)
+        c.execute("SELECT COUNT(cpi_value) FROM Combined_Prices WHERE cpi_value IS NOT NULL")
         current_count = c.fetchone()[0]
 
-        # Stop if we already have 100 rows
         if current_count >= 100:
             print("100 CPI entries already stored.")
             return
 
-        # Request full CPI data (monthly) from FRED
+        # Request monthly CPI data from FRED
         url = "https://api.stlouisfed.org/fred/series/observations"
         params = {
             "series_id": "CPIAUCSL",
@@ -45,11 +48,11 @@ def fetch_and_store_cpi():
         response = requests.get(url, params=params).json()
         raw = response.get("observations", [])
 
-        # Filter to one CPI value per (year, month)
+        # Filter to one entry per month
         monthly_data = {}
         for obs in raw:
             if obs["value"] == ".":
-                continue  # Skip missing data
+                continue
             try:
                 dt = datetime.strptime(obs["date"], "%Y-%m-%d")
                 ym_key = (dt.year, dt.month)
@@ -58,45 +61,37 @@ def fetch_and_store_cpi():
             except:
                 continue
 
-        # Select the next 25 entries to insert
+        # Select the next 25 values to insert
         sorted_months = sorted(monthly_data.items())
-        chunk_start = current_count
-        chunk_end = min(chunk_start + 25, len(sorted_months))
-        chunk = sorted_months[chunk_start:chunk_end]
+        chunk = sorted_months[current_count:current_count + 25]
 
-        # Insert new rows into the database
         inserted = 0
         for (_, _), (dt, value) in chunk:
-            date_str = dt.strftime("%Y-%m-%d")
-            c.execute("INSERT OR IGNORE INTO CPI_Data (date, cpi_value) VALUES (?, ?)", (date_str, value))
+            date_str = dt.strftime("%Y-%m")
+            c.execute("""
+                INSERT INTO Combined_Prices (date, cpi_value)
+                VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET cpi_value = excluded.cpi_value
+            """, (date_str, value))
             inserted += 1
 
         conn.commit()
         print(f"Inserted {inserted} CPI entries. Total: {current_count + inserted}")
 
-# === Function: Fetch and store oil price data from FRED ===
+# === Fetch and store Oil prices into Combined_Prices ===
 def fetch_and_store_oil():
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
 
-        # Create Oil_Prices table if it doesn't exist
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS Oil_Prices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT UNIQUE,
-                price REAL
-            )
-        """)
-
-        # Check current row count
-        c.execute("SELECT COUNT(*) FROM Oil_Prices")
+        # Count existing oil entries
+        c.execute("SELECT COUNT(oil_price) FROM Combined_Prices WHERE oil_price IS NOT NULL")
         current_count = c.fetchone()[0]
 
         if current_count >= 100:
             print("100 oil price entries already stored.")
             return
 
-        # Fetch daily oil data from FRED
+        # Request oil data
         url = "https://api.stlouisfed.org/fred/series/observations"
         params = {
             "series_id": "DCOILWTICO",
@@ -108,11 +103,10 @@ def fetch_and_store_oil():
         response = requests.get(url, params=params).json()
         raw = response.get("observations", [])
 
-        # Filter to one entry per (year, month)
         monthly_data = {}
         for obs in raw:
             if obs["value"] == ".":
-                continue  # Skip missing values
+                continue
             try:
                 dt = datetime.strptime(obs["date"], "%Y-%m-%d")
                 ym_key = (dt.year, dt.month)
@@ -121,24 +115,23 @@ def fetch_and_store_oil():
             except:
                 continue
 
-        # Pick the next 25 monthly entries based on how many exist already
         sorted_months = sorted(monthly_data.items())
-        chunk_start = current_count
-        chunk_end = min(chunk_start + 25, len(sorted_months))
-        chunk = sorted_months[chunk_start:chunk_end]
+        chunk = sorted_months[current_count:current_count + 25]
 
-        # Insert new oil data rows
         inserted = 0
         for (_, _), (dt, price) in chunk:
-            date_str = dt.strftime("%Y-%m-%d")
-            c.execute("INSERT OR IGNORE INTO Oil_Prices (date, price) VALUES (?, ?)", (date_str, price))
+            date_str = dt.strftime("%Y-%m")
+            c.execute("""
+                INSERT INTO Combined_Prices (date, oil_price)
+                VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET oil_price = excluded.oil_price
+            """, (date_str, price))
             inserted += 1
 
         conn.commit()
         print(f"Inserted {inserted} oil price entries. Total: {current_count + inserted}")
 
 # === MAIN EXECUTION ===
-# Call both functions if the file is run directly
 if __name__ == '__main__':
     fetch_and_store_cpi()
     fetch_and_store_oil()

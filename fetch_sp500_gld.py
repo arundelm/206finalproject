@@ -21,40 +21,21 @@ from get_api_key import get_api_key
 ALPHA_API_KEY = get_api_key(1)
 
 # === Function: Fetch and store S&P 500 (SPY ETF) data ===
+
 def fetch_and_store_sp500():
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
 
-        # === Step 1: Create SP500_Dates (parent) and SP500_Prices (child) tables ===
-     
-
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS SP500_Dates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT UNIQUE
-            )
-        """)
-
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS SP500_Prices (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date_id INTEGER,
-                open REAL,
-                close REAL,
-                volume INTEGER,
-                FOREIGN KEY(date_id) REFERENCES SP500_Dates(id)
-            )
-        """)
-
-        # === Step 2: Count current number of price entries ===
-        c.execute("SELECT COUNT(*) FROM SP500_Prices")
+       
+        # Count how many SP500 prices are already inserted
+        c.execute("SELECT COUNT(sp500_price) FROM Combined_Prices WHERE sp500_price IS NOT NULL")
         current_count = c.fetchone()[0]
 
         if current_count >= 100:
             print("100 SP500 data points already stored.")
             return
 
-        # === Step 3: Determine which 25-month chunk to fetch ===
+        # Determine date chunk to fetch
         chunk_index = current_count // 25
         chunk_size = 25
         base_start = datetime(2016, 7, 1)
@@ -63,7 +44,7 @@ def fetch_and_store_sp500():
 
         print(f"Fetching SP500 chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
 
-        # === Step 4: Download daily SPY data ===
+        # Fetch daily SP500 (SPY) data for the chunk
         data = yf.download(
             "SPY",
             start=chunk_start.strftime("%Y-%m-%d"),
@@ -77,80 +58,63 @@ def fetch_and_store_sp500():
             print("No SPY data returned from yfinance.")
             return
 
-        # === Step 5: Get first data point per month ===
+        # Pick first entry for each month
         monthly_data = {}
         for dt, row in data.iterrows():
             dt_obj = dt.to_pydatetime()
             ym_key = (dt_obj.year, dt_obj.month)
             if ym_key not in monthly_data:
                 try:
-                    open_price = float(row["Open"].item())
-                    close_price = float(row["Close"].item())
-                    volume = int(row["Volume"].item())
-                    monthly_data[ym_key] = (dt_obj, open_price, close_price, volume)
+                    price = float(row["Close"].item())
+                    monthly_data[ym_key] = (dt_obj, price)
                 except:
                     continue
-
             if len(monthly_data) == 25:
                 break
 
-        # === Step 6: Insert dates and data with shared integer key ===
         inserted = 0
-        for (_, _), (dt, open_price, close_price, volume) in sorted(monthly_data.items()):
-            date_str = dt.strftime("%Y-%m-%d")
-
-            # Insert into SP500_Dates and retrieve its ID
-            c.execute("INSERT OR IGNORE INTO SP500_Dates (date) VALUES (?)", (date_str,))
-            c.execute("SELECT id FROM SP500_Dates WHERE date = ?", (date_str,))
-            date_id = c.fetchone()[0]
-
-            # Insert price data using the date_id
+        for (_, _), (dt, price) in sorted(monthly_data.items()):
+            date_str = dt.strftime("%Y-%m")
             c.execute("""
-                INSERT OR IGNORE INTO SP500_Prices (date_id, open, close, volume)
-                VALUES (?, ?, ?, ?)
-            """, (date_id, open_price, close_price, volume))
-
+                INSERT INTO Combined_Prices (date, sp500_price)
+                VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET sp500_price = excluded.sp500_price
+            """, (date_str, price))
             inserted += 1
 
         conn.commit()
         print(f"Inserted {inserted} SP500 entries. Total should now be {current_count + inserted}.")
 
-# === Function: Fetch and store Gold (GLD ETF) data ===
+# === Function: Fetch and store Gold (GLD) data ===
 def fetch_and_store_gold():
-    # NOTE: Replace with secure API key management in production
-    ALPHA_API_KEY = "YOUR_API_KEY"  # If you didn't use get_api_key(), hardcode or load safely
-
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
 
-        # Create Gold_Prices table if it doesn't exist
+
+        # Create Gold_Change table (0 = down, 1 = up)
         c.execute("""
-            CREATE TABLE IF NOT EXISTS Gold_Prices (
+            CREATE TABLE IF NOT EXISTS Gold_Change (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT UNIQUE,
-                open REAL,
-                close REAL
+                label string
             )
         """)
+        c.execute("INSERT OR IGNORE INTO Gold_Change (id, label) VALUES (0, 'down')")
+        c.execute("INSERT OR IGNORE INTO Gold_Change (id, label) VALUES (1, 'up')")
 
-        # Check how many rows exist already
-        c.execute("SELECT COUNT(*) FROM Gold_Prices")
+        c.execute("SELECT COUNT(gold_open) FROM Combined_Prices WHERE gold_open IS NOT NULL")
         current_count = c.fetchone()[0]
 
         if current_count >= 100:
-            print("100 Gold entries already exist. Skipping.")
+            print("100 Gold entries already exist.")
             return
 
-        # Determine chunk range (25-month blocks)
         chunk_index = current_count // 25
-        chunk_size = 25
         base_start = datetime(2016, 7, 1)
-        chunk_start = base_start + relativedelta(months=chunk_index * chunk_size)
-        chunk_end = chunk_start + relativedelta(months=chunk_size)
+        chunk_start = base_start + relativedelta(months=chunk_index * 25)
+        chunk_end = chunk_start + relativedelta(months=25)
 
         print(f"Fetching Gold chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
 
-        # Request full GLD daily data from AlphaVantage
         url = "https://www.alphavantage.co/query"
         params = {
             "function": "TIME_SERIES_DAILY",
@@ -161,12 +125,10 @@ def fetch_and_store_gold():
 
         response = requests.get(url, params=params).json()
         time_series = response.get("Time Series (Daily)", {})
-
         if not time_series:
-            print("No time series data found in the response.")
+            print("No Gold data returned.")
             return
 
-        # Parse one entry per month from the chunk
         monthly_data = {}
         for date_str in sorted(time_series.keys()):
             dt = datetime.strptime(date_str, "%Y-%m-%d")
@@ -180,22 +142,28 @@ def fetch_and_store_gold():
                     open_price = float(entry["1. open"])
                     close_price = float(entry["4. close"])
                     monthly_data[ym_key] = (dt, open_price, close_price)
-                except (KeyError, ValueError):
+                except:
                     continue
-
             if len(monthly_data) == 25:
                 break
 
-        # Insert new rows into Gold_Prices table
         inserted = 0
         for (_, _), (dt, open_price, close_price) in sorted(monthly_data.items()):
-            date_str = dt.strftime("%Y-%m-%d")
-            c.execute("INSERT OR IGNORE INTO Gold_Prices (date, open, close) VALUES (?, ?, ?)",
-                      (date_str, open_price, close_price))
+            direction = 1 if close_price > open_price else 0
+
+            date_str = dt.strftime("%Y-%m")
+            c.execute("""
+            INSERT INTO Combined_Prices (date, gold_open, gold_close, gold_change)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                gold_open = excluded.gold_open,
+                gold_close = excluded.gold_close,
+                gold_change = excluded.gold_change
+        """, (date_str, open_price, close_price, direction))
             inserted += 1
 
         conn.commit()
-        print(f"Inserted {inserted} new Gold entries. Total should now be {current_count + inserted}.")
+        print(f"Inserted {inserted} new Gold entries. Total now: {current_count + inserted}.")
 
 # === MAIN EXECUTION ===
 # Run both fetch functions when this file is executed directly

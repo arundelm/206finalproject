@@ -21,12 +21,12 @@ Price-to-CPI Ratios (First 20 Rows):
 2018-11-01: BTC/CPI=25.01, SP500/CPI=1.08, Gold/CPI=0.46, Oil/CPI=0.25
 
 Correlation Matrix:
-	btc	sp500	gold	oil	cpi
-btc	1.00	0.92	0.83	0.56	0.77
+		btc		sp500	gold	oil		cpi
+btc		1.00	0.92	0.83	0.56	0.77
 sp500	0.92	1.00	0.91	0.66	0.92
 gold	0.83	0.91	1.00	0.44	0.87
-oil	0.56	0.66	0.44	1.00	0.71
-cpi	0.77	0.92	0.87	0.71	1.00
+oil		0.56	0.66	0.44	1.00	0.71
+cpi		0.77	0.92	0.87	0.71	1.00
 
 Average Monthly Returns (%):
 btc: 10.58%

@@ -8,35 +8,41 @@ def fetch_and_store_bitcoin():
     # Connect to SQLite database
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
-        
-        # Create the Bitcoin_Prices table if it doesn't exist
+
+        # Ensure Combined_Prices table exists with btc_price column
         c.execute("""
-            CREATE TABLE IF NOT EXISTS Bitcoin_Prices (
+            CREATE TABLE IF NOT EXISTS Combined_Prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT UNIQUE,
-                price REAL
+                btc_price REAL,
+                sp500_price REAL,
+                gold_open REAL,
+                gold_close REAL,
+                gold_change INTEGER,
+                oil_price REAL,
+                cpi_value REAL
             )
         """)
 
-        # Check how many Bitcoin records already exist
-        c.execute("SELECT COUNT(*) FROM Bitcoin_Prices")
+        # Count how many BTC entries already exist (not NULL)
+        c.execute("SELECT COUNT(btc_price) FROM Combined_Prices WHERE btc_price IS NOT NULL")
         current_count = c.fetchone()[0]
 
-        # Stop if we've already inserted 100 datapoints
+        # Exit if 100 BTC values already stored
         if current_count >= 100:
             print("100 Bitcoin data points already stored.")
             return
 
-        # Calculate the chunk to fetch (25 months at a time)
-        chunk_index = current_count // 25  # Which 25-month chunk to fetch
-        chunk_size = 25  # Fetch 25 months at a time
-        base_start = datetime(2016, 7, 1)  # Start from July 2016
+        # Determine chunk to fetch
+        chunk_index = current_count // 25
+        chunk_size = 25
+        base_start = datetime(2016, 7, 1)
         chunk_start = base_start + relativedelta(months=chunk_index * chunk_size)
         chunk_end = chunk_start + relativedelta(months=chunk_size)
 
         print(f"Fetching chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
 
-        # Download daily Bitcoin price data from yfinance
+        # Download daily BTC data from yfinance
         data = yf.download(
             "BTC-USD",
             start=chunk_start.strftime("%Y-%m-%d"),
@@ -46,34 +52,37 @@ def fetch_and_store_bitcoin():
             auto_adjust=False
         )
 
-        # Handle case where no data is returned
+        # Exit if no data was returned
         if data is None or data.empty:
             print("No data returned from yfinance.")
             return
 
-        # Extract the first available price from each month in the chunk
+        # Select one entry per month — first available "Open" value
         monthly_data = {}
         for dt, row in data.iterrows():
             dt_obj = dt.to_pydatetime()
             ym_key = (dt_obj.year, dt_obj.month)
             if ym_key not in monthly_data:
                 try:
-                    price = float(row["Open"].item())  # Convert price to float
+                    price = float(row["Open"].item())
                     monthly_data[ym_key] = (dt_obj, price)
                 except:
-                    continue  # Skip any rows with bad/missing data
+                    continue
 
             if len(monthly_data) == 25:
-                break  # We only want 25 entries
+                break
 
-        # Insert into the database
+        # Insert results into Combined_Prices
         inserted = 0
         for (_, _), (dt, price) in sorted(monthly_data.items()):
-            date_str = dt.strftime("%Y-%m-%d")
-            c.execute("INSERT OR IGNORE INTO Bitcoin_Prices (date, price) VALUES (?, ?)", (date_str, price))
+            date_str = dt.strftime("%Y-%m")
+            c.execute("""
+                INSERT INTO Combined_Prices (date, btc_price)
+                VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET btc_price = excluded.btc_price
+            """, (date_str, price))
             inserted += 1
 
-        # Commit changes to the database
         conn.commit()
         print(f"Inserted {inserted} BTC entries. Total should now be {current_count + inserted}.")
 
