@@ -8,7 +8,7 @@ def fetch_and_store_bitcoin():
     # Connect to SQLite database
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
-
+        
         # Create the Bitcoin_Prices table if it doesn't exist
         c.execute("""
             CREATE TABLE IF NOT EXISTS Bitcoin_Prices (
