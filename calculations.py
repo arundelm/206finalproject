@@ -45,8 +45,13 @@ oil_to_cpi = [o / c for o, c in zip(oil, cpi)]
 # === WRITE FIRST 20 PRICE/CPI RATIO ROWS ===
 with open("calculations_output.txt", "a") as f:
     f.write("Price-to-CPI Ratios (First 20 Rows):\n")
+    f.write("Date       BTC/CPI  SP500/CPI  Gold/CPI  Oil/CPI\n")
     for i in range(min(20, len(dates))):
-        f.write(f"{dates[i].strftime('%Y-%m')}: BTC/CPI={btc_to_cpi[i]:.2f}, SP500/CPI={sp_to_cpi[i]:.2f}, Gold/CPI={gold_to_cpi[i]:.2f}, Oil/CPI={oil_to_cpi[i]:.2f}\n")
+        f.write(f"{dates[i].strftime('%Y-%m')}  "
+                f"{btc_to_cpi[i]:8.2f}  "
+                f"{sp_to_cpi[i]:10.2f}  "
+                f"{gold_to_cpi[i]:9.2f}  "
+                f"{oil_to_cpi[i]:8.2f}\n")
 
 # === CORRELATION MATRIX ===
 data_matrix = np.array([btc, sp, gold, oil, cpi])
@@ -55,10 +60,9 @@ labels = ['btc', 'sp500', 'gold', 'oil', 'cpi']
 
 with open("calculations_output.txt", "a") as f:
     f.write("\nCorrelation Matrix:\n")
-    f.write('\t' + '\t'.join(labels) + '\n')
+    f.write("{:<8}".format("") + "".join(f"{label:<10}" for label in labels) + "\n")
     for i, row in enumerate(corr_matrix):
-        f.write(labels[i] + '\t' + '\t'.join(f"{val:.2f}" for val in row) + '\n')
-
+        f.write(f"{labels[i]:<8}" + "".join(f"{val:<10.2f}" for val in row) + "\n")
 # === GRAPH: Normalized Price-to-CPI (Log) ===
 plt.figure(figsize=(12, 6))
 plt.plot(dates, [x / btc_to_cpi[0] * 100 for x in btc_to_cpi], label='Bitcoin / CPI')
@@ -167,10 +171,16 @@ with open("calculations_output.txt", "a") as f:
     f.write(f"Months Gold Went DOWN: {change_counts['down']}\n")
 
 # === GRAPH: Gold Price Movement Bar Chart ===
-plt.figure(figsize=(6, 5))
-plt.bar(["Down", "Up"], [change_counts["down"], change_counts["up"]], color=["red", "green"])
+# === GRAPH: Gold Price Movement Pie Chart ===
+plt.figure(figsize=(6, 6))
+labels = ["Down", "Up"]
+sizes = [change_counts["down"], change_counts["up"]]
+colors = ["red", "green"]
+explode = (0.05, 0.05)  # Slightly separate both slices
+
+plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%',
+        startangle=90, explode=explode, shadow=True)
 plt.title("Monthly Gold Price Movement")
-plt.ylabel("Number of Months")
 plt.tight_layout()
 plt.savefig("gold_up_down_chart.png")
 plt.close()
