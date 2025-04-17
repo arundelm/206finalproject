@@ -25,18 +25,28 @@ def fetch_and_store_sp500():
     with sqlite3.connect("financial_data.db") as conn:
         c = conn.cursor()
 
-        # Create table for SP500 data if it doesn't exist
+        # === Step 1: Create SP500_Dates (parent) and SP500_Prices (child) tables ===
+     
+
         c.execute("""
-            CREATE TABLE IF NOT EXISTS SP500_Prices (
+            CREATE TABLE IF NOT EXISTS SP500_Dates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT UNIQUE,
-                open REAL,
-                close REAL,
-                volume INTEGER
+                date TEXT UNIQUE
             )
         """)
 
-        # Check how many rows are already in the table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS SP500_Prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date_id INTEGER,
+                open REAL,
+                close REAL,
+                volume INTEGER,
+                FOREIGN KEY(date_id) REFERENCES SP500_Dates(id)
+            )
+        """)
+
+        # === Step 2: Count current number of price entries ===
         c.execute("SELECT COUNT(*) FROM SP500_Prices")
         current_count = c.fetchone()[0]
 
@@ -44,7 +54,7 @@ def fetch_and_store_sp500():
             print("100 SP500 data points already stored.")
             return
 
-        # Determine the 25-month chunk to fetch next
+        # === Step 3: Determine which 25-month chunk to fetch ===
         chunk_index = current_count // 25
         chunk_size = 25
         base_start = datetime(2016, 7, 1)
@@ -53,7 +63,7 @@ def fetch_and_store_sp500():
 
         print(f"Fetching SP500 chunk {chunk_index + 1}: {chunk_start.date()} to {chunk_end.date()}")
 
-        # Use yfinance to fetch SPY daily data for this time range
+        # === Step 4: Download daily SPY data ===
         data = yf.download(
             "SPY",
             start=chunk_start.strftime("%Y-%m-%d"),
@@ -63,12 +73,11 @@ def fetch_and_store_sp500():
             auto_adjust=False
         )
 
-        # Skip if no data is returned
         if data is None or data.empty:
             print("No SPY data returned from yfinance.")
             return
 
-        # Extract the first available entry per month
+        # === Step 5: Get first data point per month ===
         monthly_data = {}
         for dt, row in data.iterrows():
             dt_obj = dt.to_pydatetime()
@@ -85,14 +94,22 @@ def fetch_and_store_sp500():
             if len(monthly_data) == 25:
                 break
 
-        # Insert into database
+        # === Step 6: Insert dates and data with shared integer key ===
         inserted = 0
         for (_, _), (dt, open_price, close_price, volume) in sorted(monthly_data.items()):
             date_str = dt.strftime("%Y-%m-%d")
+
+            # Insert into SP500_Dates and retrieve its ID
+            c.execute("INSERT OR IGNORE INTO SP500_Dates (date) VALUES (?)", (date_str,))
+            c.execute("SELECT id FROM SP500_Dates WHERE date = ?", (date_str,))
+            date_id = c.fetchone()[0]
+
+            # Insert price data using the date_id
             c.execute("""
-                INSERT OR IGNORE INTO SP500_Prices (date, open, close, volume)
+                INSERT OR IGNORE INTO SP500_Prices (date_id, open, close, volume)
                 VALUES (?, ?, ?, ?)
-            """, (date_str, open_price, close_price, volume))
+            """, (date_id, open_price, close_price, volume))
+
             inserted += 1
 
         conn.commit()

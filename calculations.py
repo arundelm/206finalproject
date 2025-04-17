@@ -20,7 +20,8 @@ SELECT
     oil.price AS oil_price,
     cpi.cpi_value AS cpi_value
 FROM Bitcoin_Prices btc
-JOIN SP500_Prices sp ON btc.date = sp.date
+JOIN SP500_Dates d ON btc.date = d.date
+JOIN SP500_Prices sp ON sp.date_id = d.id
 JOIN Gold_Prices gold ON btc.date = gold.date
 JOIN Oil_Prices oil ON btc.date = oil.date
 JOIN CPI_Data cpi ON btc.date = cpi.date
